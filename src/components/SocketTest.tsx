@@ -146,9 +146,11 @@ export const SocketTest: React.FC = () => {
     }
 
     addMessage('📍 Obteniendo ubicación GPS...', 'client');
+    setLocationPermission('prompt');
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        setLocationPermission('granted');
         const locationData = {
           userId: parseInt(userId),
           latitude: position.coords.latitude.toFixed(6),
@@ -162,24 +164,25 @@ export const SocketTest: React.FC = () => {
         socket.emit('location:update', locationData);
       },
       (error) => {
-        let errorMessage = '❌ Error obteniendo ubicación: ';
-        switch(error.code) {
-          case error.PERMISSION_DENIED:
-            errorMessage += 'Permiso denegado por el usuario';
-            setLocationPermission('denied');
-            break;
-          case error.POSITION_UNAVAILABLE:
-            errorMessage += 'Información de ubicación no disponible';
-            break;
-          case error.TIMEOUT:
-            errorMessage += 'Tiempo de espera agotado';
-            break;
-          default:
-            errorMessage += 'Error desconocido';
-            break;
+        if (error.code === error.PERMISSION_DENIED) {
+          setLocationPermission('denied');
+          addMessage('❌ Permiso de ubicación denegado. Por favor, permite el acceso a tu ubicación', 'error');
+          addMessage('💡 Busca el ícono de 📍 o 🔒 en la barra de direcciones y haz clic en "Permitir"', 'error');
+        } else {
+          let errorMessage = '❌ Error obteniendo ubicación: ';
+          switch(error.code) {
+            case error.POSITION_UNAVAILABLE:
+              errorMessage += 'Información de ubicación no disponible';
+              break;
+            case error.TIMEOUT:
+              errorMessage += 'Tiempo de espera agotado';
+              break;
+            default:
+              errorMessage += error.message;
+              break;
+          }
+          addMessage(errorMessage, 'error');
         }
-        addMessage(errorMessage, 'error');
-        setLocationError(errorMessage);
       },
       {
         enableHighAccuracy: true,
@@ -205,9 +208,33 @@ export const SocketTest: React.FC = () => {
       return;
     }
 
-    const newStatus = !trackingActive;
-    addMessage(`${newStatus ? '🟢' : '🔴'} ${newStatus ? 'Activando' : 'Desactivando'} tracking...`, 'client');
-    socket.emit('tracking:setStatus', { active: newStatus });
+    if (!trackingActive && locationPermission !== 'granted') {
+      // Si vamos a activar el tracking y no tenemos permiso, lo solicitamos primero
+      addMessage('📍 Se necesita permiso de ubicación para activar el tracking', 'client');
+      setLocationPermission('prompt');
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setLocationPermission('granted');
+          setCurrentLocation(position);
+          addMessage('✅ Permiso concedido, activando tracking...', 'location');
+          const newStatus = !trackingActive;
+          setTrackingActive(newStatus);
+          socket.emit('tracking:setStatus', { active: newStatus });
+        },
+        (error) => {
+          if (error.code === error.PERMISSION_DENIED) {
+            setLocationPermission('denied');
+            addMessage('❌ Permiso denegado. No se puede activar el tracking', 'error');
+          }
+        }
+      );
+    } else {
+      // Si ya tenemos permiso o vamos a desactivar
+      const newStatus = !trackingActive;
+      addMessage(`${newStatus ? '🟢' : '🔴'} ${newStatus ? 'Activando' : 'Desactivando'} tracking...`, 'client');
+      socket.emit('tracking:setStatus', { active: newStatus });
+    }
   };
 
   const ping = () => {
@@ -250,7 +277,7 @@ export const SocketTest: React.FC = () => {
 
   // Enviar ubicación automáticamente cuando el tracking está activo
   useEffect(() => {
-    if (isConnected && trackingActive && navigator.geolocation) {
+    if (isConnected && trackingActive && navigator.geolocation && socket) {
       addMessage('🟢 Iniciando tracking GPS en tiempo real...', 'client');
 
       const id = navigator.geolocation.watchPosition(
@@ -264,37 +291,36 @@ export const SocketTest: React.FC = () => {
           };
 
           setCurrentLocation(position);
-          socket?.emit('location:update', locationData);
+          // Verificar que el socket esté conectado antes de emitir
+          if (socket.connected) {
+            socket.emit('location:update', locationData);
+          }
         },
         (error) => {
-          addMessage(`❌ Error en tracking GPS: ${error.message}`, 'error');
+          // No mostrar errores de timeout como error fatal
+          if (error.code !== error.TIMEOUT) {
+            addMessage(`⚠️ Error en tracking GPS: ${error.message}`, 'error');
+          }
         },
         {
           enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 5000
+          timeout: 15000,
+          maximumAge: 10000
         }
       );
 
       setWatchId(id);
+    }
+  }, [trackingActive]); // Eliminamos isConnected y socket de las dependencias
 
-      return () => {
-        if (id !== null) {
-          navigator.geolocation.clearWatch(id);
-          setWatchId(null);
-        }
-      };
-    } else if (watchId !== null) {
+  // Efecto para detener el tracking cuando se desactiva
+  useEffect(() => {
+    if (!trackingActive && watchId !== null) {
       navigator.geolocation.clearWatch(watchId);
       setWatchId(null);
       addMessage('🔴 Deteniendo tracking GPS...', 'client');
     }
-  }, [isConnected, trackingActive, userId]);
-
-  // Verificar permisos de ubicación al cargar el componente
-  useEffect(() => {
-    requestLocationPermission();
-  }, []);
+  }, [trackingActive, watchId]);
 
   useEffect(() => {
     return () => {
@@ -305,7 +331,7 @@ export const SocketTest: React.FC = () => {
         navigator.geolocation.clearWatch(watchId);
       }
     };
-  }, [socket, watchId]);
+  }, [socket]);
 
   const getMessageStyle = (type: Message['type']) => {
     switch (type) {
@@ -415,29 +441,20 @@ export const SocketTest: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {locationPermission !== 'granted' && (
-              <button
-                onClick={requestLocationPermission}
-                className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
-              >
-                🎯 Solicitar Permiso GPS
-              </button>
-            )}
-
             <button
-              onClick={toggleTracking}
-              disabled={!isConnected || locationPermission !== 'granted'}
-              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              onClick={sendLocation}
+              disabled={!isConnected}
+              className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
             >
-              {trackingActive ? '🔴 Desactivar Tracking' : '🟢 Activar Tracking'}
+              📍 Obtener Ubicación (Solicita Permiso)
             </button>
 
             <button
-              onClick={sendLocation}
-              disabled={!isConnected || locationPermission !== 'granted'}
-              className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              onClick={toggleTracking}
+              disabled={!isConnected}
+              className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
             >
-              📍 Enviar Ubicación Manual
+              {trackingActive ? '🔴 Desactivar Tracking' : '🟢 Activar Tracking'}
             </button>
 
             <button
