@@ -36,7 +36,6 @@ export const SocketTest: React.FC = () => {
   const [activeLocations, setActiveLocations] = useState<Location[]>([]);
   const [currentLocation, setCurrentLocation] = useState<GeolocationPosition | null>(null);
   const [locationPermission, setLocationPermission] = useState<'prompt' | 'granted' | 'denied'>('prompt');
-  const [locationError, setLocationError] = useState<string>('');
   const [watchId, setWatchId] = useState<number | null>(null);
 
   const addMessage = (text: string, type: Message['type'] = 'connection') => {
