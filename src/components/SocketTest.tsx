@@ -16,13 +16,22 @@ interface Location {
   timestamp: string;
 }
 
+// NOTA: En un entorno de producción real:
+// - El userId debería obtenerse del token JWT del usuario autenticado
+// - Ejemplo: const userId = jwt_decode(token).sub || jwt_decode(token).userId
+// - El token JWT se enviaría en el header de autenticación: { Authorization: `Bearer ${token}` }
+// - Socket.io puede configurarse para autenticar mediante el token en el handshake inicial
+// - Ver: https://socket.io/how-to/use-with-jwt-authentication
+
 export const SocketTest: React.FC = () => {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState<string>('');
   const [isConnected, setIsConnected] = useState<boolean>(false);
-  const [serverUrl, setServerUrl] = useState<string>('http://localhost:4000');
-  const [userId, setUserId] = useState<string>('123');
+  const [serverUrl, setServerUrl] = useState<string>(import.meta.env.VITE_SERVER_URL || 'http://localhost:4000');
+  // Para desarrollo/testing - en producción esto vendría del token JWT autenticado
+  // Ejemplo: const userId = getUserFromJWT().id;
+  const [userId, setUserId] = useState<string>(import.meta.env.VITE_DEFAULT_USER_ID || '123');
   const [trackingActive, setTrackingActive] = useState<boolean>(false);
   const [activeLocations, setActiveLocations] = useState<Location[]>([]);
   const [currentLocation, setCurrentLocation] = useState<GeolocationPosition | null>(null);
@@ -32,7 +41,7 @@ export const SocketTest: React.FC = () => {
 
   const addMessage = (text: string, type: Message['type'] = 'connection') => {
     const newMessage: Message = {
-      id: Date.now().toString(),
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       text,
       timestamp: new Date(),
       type
@@ -45,6 +54,12 @@ export const SocketTest: React.FC = () => {
       socket.disconnect();
     }
 
+    // En producción, aquí se pasaría el token JWT para autenticación
+    // Ejemplo: const newSocket = io(serverUrl, {
+    //   auth: {
+    //     token: getJWTToken() // Token del usuario autenticado
+    //   }
+    // });
     const newSocket = io(serverUrl);
     setSocket(newSocket);
 
@@ -172,10 +187,16 @@ export const SocketTest: React.FC = () => {
           let errorMessage = '❌ Error obteniendo ubicación: ';
           switch(error.code) {
             case error.POSITION_UNAVAILABLE:
-              errorMessage += 'Información de ubicación no disponible';
+              errorMessage += 'La información de ubicación no está disponible';
+              addMessage('💡 Intenta moverte a una área con mejor recepción de señal', 'error');
               break;
             case error.TIMEOUT:
-              errorMessage += 'Tiempo de espera agotado';
+              errorMessage += 'Tiempo de espera agotado (30s)';
+              addMessage('💡 Posibles causas:', 'error');
+              addMessage('   • Señal GPS débil (interiores)', 'error');
+              addMessage('   • Permiso denegado o bloqueado', 'error');
+              addMessage('   • GPS desactivado en el dispositivo', 'error');
+              addMessage('💡 Intenta: habilitar GPS y permitir ubicación en el navegador', 'error');
               break;
             default:
               errorMessage += error.message;
@@ -186,8 +207,8 @@ export const SocketTest: React.FC = () => {
       },
       {
         enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
+        timeout: 30000, // Aumentado a 30 segundos
+        maximumAge: 60000 // Permitir ubicaciones cacheadas de hasta 1 minuto
       }
     );
   };
@@ -472,6 +493,13 @@ export const SocketTest: React.FC = () => {
             >
               🏓 Ping
             </button>
+
+            <button
+              onClick={requestLocationPermission}
+              className="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors"
+            >
+              🔍 Verificar GPS
+            </button>
           </div>
 
           {locationPermission === 'denied' && (
@@ -506,7 +534,7 @@ export const SocketTest: React.FC = () => {
                 </span>
                 <br />
                 <span className="text-xs text-gray-500">
-                  {new Date(loc.lastUpdate).toLocaleString()}
+                  {new Date(loc.timestamp).toLocaleString()}
                 </span>
               </div>
             ))}
