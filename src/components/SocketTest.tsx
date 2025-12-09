@@ -9,11 +9,13 @@ interface Message {
 }
 
 interface Location {
-  userId: number;
+  userId: string;
   latitude: number;
   longitude: number;
   accuracy?: number;
   timestamp: string;
+  online?: boolean;
+  lastUpdate?: string;
 }
 
 // NOTA: En un entorno de producción real:
@@ -31,7 +33,7 @@ export const SocketTest: React.FC = () => {
   const [serverUrl, setServerUrl] = useState<string>(import.meta.env.VITE_SERVER_URL || 'http://localhost:4000');
   // Para desarrollo/testing - en producción esto vendría del token JWT autenticado
   // Ejemplo: const userId = getUserFromJWT().id;
-  const [userId, setUserId] = useState<string>(import.meta.env.VITE_DEFAULT_USER_ID || '123');
+  const [userId, setUserId] = useState<string>(import.meta.env.VITE_DEFAULT_USER_ID || 'fiscalizador-001');
   const [trackingActive, setTrackingActive] = useState<boolean>(false);
   const [activeLocations, setActiveLocations] = useState<Location[]>([]);
   const [currentLocation, setCurrentLocation] = useState<GeolocationPosition | null>(null);
@@ -40,7 +42,7 @@ export const SocketTest: React.FC = () => {
 
   const addMessage = (text: string, type: Message['type'] = 'connection') => {
     const newMessage: Message = {
-      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       text,
       timestamp: new Date(),
       type
@@ -65,6 +67,9 @@ export const SocketTest: React.FC = () => {
     newSocket.on('connect', () => {
       setIsConnected(true);
       addMessage(`✅ Conectado con ID: ${newSocket.id}`, 'connection');
+      // Solicitar estado actual del tracking
+      newSocket.emit('tracking:getStatus');
+      newSocket.emit('tracking:getStats');
     });
 
     newSocket.on('welcome', (data: { message: string }) => {
@@ -76,15 +81,15 @@ export const SocketTest: React.FC = () => {
     });
 
     // Eventos de tracking GPS
-    newSocket.on('location:confirmed', (data: any) => {
-      addMessage(`✅ Ubicación confirmada: ${data.message}`, 'server');
+    newSocket.on('location:confirmed', (data: { message: string; userId: string; timestamp: string }) => {
+      addMessage(`✅ Ubicación confirmada para fiscalizador ${data.userId}`, 'server');
     });
 
     newSocket.on('location:error', (data: { message: string }) => {
       addMessage(`❌ Error de ubicación: ${data.message}`, 'error');
     });
 
-    newSocket.on('location:realtime', (data: { userId: number; location: Location }) => {
+    newSocket.on('location:realtime', (data: { userId: string; location: Location; timestamp: string }) => {
       addMessage(`📍 Ubicación en tiempo real - Usuario ${data.userId}:`, 'location');
       addMessage(`   Lat: ${data.location.latitude}, Lng: ${data.location.longitude}`, 'location');
     });
@@ -94,12 +99,12 @@ export const SocketTest: React.FC = () => {
       setActiveLocations(data);
     });
 
-    newSocket.on('tracking:statusChanged', (data: { active: boolean; updatedBy: string }) => {
+    newSocket.on('tracking:statusChanged', (data: { active: boolean; updatedBy: string; timestamp: string }) => {
       setTrackingActive(data.active);
       addMessage(`🔄 Tracking ${data.active ? 'ACTIVADO' : 'DESACTIVADO'} por ${data.updatedBy}`, 'server');
     });
 
-    newSocket.on('tracking:status', (data: { active: boolean }) => {
+    newSocket.on('tracking:status', (data: { active: boolean; updatedAt?: string }) => {
       setTrackingActive(data.active);
       addMessage(`📊 Estado del tracking: ${data.active ? 'ACTIVO' : 'INACTIVO'}`, 'server');
     });
@@ -107,6 +112,10 @@ export const SocketTest: React.FC = () => {
     newSocket.on('tracking:statusResponse', (data: { success: boolean; message: string; active: boolean }) => {
       setTrackingActive(data.active);
       addMessage(`📊 Respuesta: ${data.message}`, 'server');
+    });
+
+    newSocket.on('tracking:stats', (data: any) => {
+      addMessage(`📊 Estadísticas: ${JSON.stringify(data)}`, 'server');
     });
 
     newSocket.on('pong', (data: { timestamp: string }) => {
@@ -166,9 +175,9 @@ export const SocketTest: React.FC = () => {
       (position) => {
         setLocationPermission('granted');
         const locationData = {
-          userId: parseInt(userId),
-          latitude: position.coords.latitude.toFixed(6),
-          longitude: position.coords.longitude.toFixed(6),
+          userId: userId,
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
           accuracy: position.coords.accuracy,
           timestamp: new Date().toISOString()
         };
@@ -240,7 +249,7 @@ export const SocketTest: React.FC = () => {
           addMessage('✅ Permiso concedido, activando tracking...', 'location');
           const newStatus = !trackingActive;
           setTrackingActive(newStatus);
-          socket.emit('tracking:setStatus', { active: newStatus });
+          socket.emit('tracking:setStatus', { active: newStatus, userId: userId });
         },
         (error) => {
           if (error.code === error.PERMISSION_DENIED) {
@@ -253,7 +262,7 @@ export const SocketTest: React.FC = () => {
       // Si ya tenemos permiso o vamos a desactivar
       const newStatus = !trackingActive;
       addMessage(`${newStatus ? '🟢' : '🔴'} ${newStatus ? 'Activando' : 'Desactivando'} tracking...`, 'client');
-      socket.emit('tracking:setStatus', { active: newStatus });
+      socket.emit('tracking:setStatus', { active: newStatus, userId: userId });
     }
   };
 
@@ -303,9 +312,9 @@ export const SocketTest: React.FC = () => {
       const id = navigator.geolocation.watchPosition(
         (position) => {
           const locationData = {
-            userId: parseInt(userId),
-            latitude: position.coords.latitude.toFixed(6),
-            longitude: position.coords.longitude.toFixed(6),
+            userId: userId,
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
             accuracy: position.coords.accuracy,
             timestamp: new Date().toISOString()
           };
@@ -372,7 +381,7 @@ export const SocketTest: React.FC = () => {
 
   return (
     <div className="max-w-6xl mx-auto p-6 bg-white rounded-lg shadow-lg">
-      <h1 className="text-3xl font-bold text-gray-800 mb-6">🔌 Cliente Socket.IO Test con GPS Tracking</h1>
+      <h1 className="text-3xl font-bold text-gray-800 mb-6">🚴‍♂️ Fiscalizador - Sistema de Tracking GPS</h1>
 
       <div className="mb-6 space-y-4">
         <div className="flex items-center space-x-4">
@@ -437,15 +446,15 @@ export const SocketTest: React.FC = () => {
         )}
       </div>
 
-      {/* Controles de GPS Tracking */}
+      {/* Controles de GPS Tracking para Fiscalizador */}
       <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-        <h2 className="text-xl font-semibold mb-4">📍 GPS Tracking</h2>
+        <h2 className="text-xl font-semibold mb-4">📍 Mi Dispositivo GPS</h2>
 
         <div className="space-y-4">
           <div className="flex items-center space-x-4">
-            <label className="text-gray-700">User ID:</label>
+            <label className="text-gray-700 font-medium">ID Fiscalizador:</label>
             <input
-              type="number"
+              type="text"
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
               className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -454,10 +463,20 @@ export const SocketTest: React.FC = () => {
 
             <div className="flex items-center space-x-2">
               <div className={`w-3 h-3 rounded-full ${trackingActive ? 'bg-green-500' : 'bg-red-500'}`}></div>
-              <span className="text-gray-700">
+              <span className="text-gray-700 font-medium">
                 Tracking: {trackingActive ? 'ACTIVO' : 'INACTIVO'}
               </span>
             </div>
+          </div>
+
+          <div className="bg-blue-50 p-3 rounded">
+            <p className="text-sm text-blue-800">
+              <strong>📋 Como funciona:</strong><br/>
+              • Siempre puedes <strong>conectarte</strong> al servidor (estado verde)<br/>
+              • Solo puedes <strong>reportar ubicación</strong> cuando el administrador activa el tracking<br/>
+              • Cuando está activo, tu ubicación se envía automáticamente cada 15 segundos<br/>
+              • Si intentas enviar ubicación con tracking inactivo, recibirás un error
+            </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -466,7 +485,7 @@ export const SocketTest: React.FC = () => {
               disabled={!isConnected}
               className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
             >
-              📍 Obtener Ubicación (Solicita Permiso)
+              📍 Enviar Ubicación Manual
             </button>
 
             <button
@@ -474,15 +493,7 @@ export const SocketTest: React.FC = () => {
               disabled={!isConnected}
               className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
             >
-              {trackingActive ? '🔴 Desactivar Tracking' : '🟢 Activar Tracking'}
-            </button>
-
-            <button
-              onClick={getActiveLocations}
-              disabled={!isConnected}
-              className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-            >
-              📊 Ver Ubicaciones Activas
+              {trackingActive ? '🔴 Desactivar Mi Tracking' : '🟢 Activar Mi Tracking'}
             </button>
 
             <button
@@ -490,14 +501,7 @@ export const SocketTest: React.FC = () => {
               disabled={!isConnected}
               className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
             >
-              🏓 Ping
-            </button>
-
-            <button
-              onClick={requestLocationPermission}
-              className="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors"
-            >
-              🔍 Verificar GPS
+              🏓 Verificar Conexión
             </button>
           </div>
 
@@ -516,55 +520,24 @@ export const SocketTest: React.FC = () => {
         </div>
       </div>
 
-      {/* Ubicaciones Activas */}
-      <div className="mb-6 p-4 bg-blue-50 rounded-lg">
-        <h3 className="text-lg font-semibold mb-2">📍 Ubicaciones Activas</h3>
-        {activeLocations.length === 0 ? (
-          <p className="text-gray-500">No hay ubicaciones activas</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {activeLocations.map((loc, idx) => (
-              <div key={idx} className="p-2 bg-white rounded border border-gray-200">
-                <strong>Usuario {loc.userId}</strong>
-                <br />
-                <span className="text-sm">
-                  Lat: {loc.latitude}, Lng: {loc.longitude}
-                  {loc.accuracy && `, Precisión: ${loc.accuracy}m`}
-                </span>
-                <br />
-                <span className="text-xs text-gray-500">
-                  {new Date(loc.timestamp).toLocaleString()}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
-      <div className="mb-6">
-        <div className="flex items-center space-x-2 mb-4">
-          <input
-            type="text"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-            placeholder="Escribe un mensaje..."
-            disabled={!isConnected}
-            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
-          />
-          <button
-            onClick={sendMessage}
-            disabled={!isConnected || !inputValue.trim()}
-            className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-          >
-            Enviar
-          </button>
-          <button
-            onClick={clearMessages}
-            className="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors"
-          >
-            Limpiar
-          </button>
+      {/* Estado del Servidor */}
+      <div className="mb-6 p-4 bg-green-50 rounded-lg">
+        <h3 className="text-lg font-semibold mb-2">📡 Estado del Servidor</h3>
+        <div className="space-y-1 text-sm">
+          <p>• Estado del tracking: <span className={`font-bold ${trackingActive ? 'text-green-600' : 'text-red-600'}`}>
+            {trackingActive ? 'ACTIVADO por administrador' : 'DESACTIVADO'}
+          </span></p>
+          <p>• Conexión: <span className={`font-bold ${isConnected ? 'text-green-600' : 'text-red-600'}`}>
+            {isConnected ? 'Conectado' : 'Desconectado'}
+          </span></p>
+          <p>• GPS: <span className={`font-bold ${
+            locationPermission === 'granted' ? 'text-green-600' :
+            locationPermission === 'denied' ? 'text-red-600' : 'text-yellow-600'
+          }`}>
+            {locationPermission === 'granted' ? 'Permitido' :
+             locationPermission === 'denied' ? 'Denegado' : 'Pendiente'}
+          </span></p>
         </div>
       </div>
 
@@ -572,9 +545,9 @@ export const SocketTest: React.FC = () => {
         {messages.length === 0 ? (
           <p className="text-gray-500 text-center py-8">No hay mensajes aún. Conéctate al servidor para comenzar.</p>
         ) : (
-          messages.map((message) => (
+          messages.map((message, index) => (
             <div
-              key={message.id}
+              key={`${message.id}-${index}`}
               className={`p-3 rounded-lg border ${getMessageStyle(message.type)}`}
             >
               <div className="flex justify-between items-start">
