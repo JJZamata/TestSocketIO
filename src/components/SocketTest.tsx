@@ -26,7 +26,6 @@ export const SocketTest: React.FC = () => {
   const [serverUrl, setServerUrl] = useState<string>('http://localhost:4000');
   const [userId, setUserId] = useState<string>('fiscalizador-001');
   const [trackingActive, setTrackingActive] = useState<boolean>(false);
-  const [activeLocations, setActiveLocations] = useState<Location[]>([]);
   const [currentLocation, setCurrentLocation] = useState<GeolocationPosition | null>(null);
   const [locationPermission, setLocationPermission] = useState<'prompt' | 'granted' | 'denied'>('prompt');
   const [watchId, setWatchId] = useState<number | null>(null);
@@ -102,7 +101,8 @@ export const SocketTest: React.FC = () => {
 
     newSocket.on('location:allLocations', (data: Location[]) => {
       addMessage(`📊 Recibidas ${data.length} ubicaciones activas`, 'location');
-      setActiveLocations(data);
+      // Si necesitas usar las ubicaciones, puedes procesarlas aquí
+      console.log('Ubicaciones activas:', data);
     });
 
     newSocket.on('tracking:statusChanged', (data: { active: boolean; updatedBy: string; timestamp: string }) => {

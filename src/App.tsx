@@ -1,5 +1,4 @@
 import { SocketTest } from './components/SocketTest';
-import { SocketTestAdvanced } from './components/SocketTestAdvanced';
 import './App.css';
 
 function App() {
