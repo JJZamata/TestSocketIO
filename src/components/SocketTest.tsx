@@ -23,8 +23,8 @@ export const SocketTest: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState<string>('');
   const [isConnected, setIsConnected] = useState<boolean>(false);
-  const [serverUrl, setServerUrl] = useState<string>('http://localhost:4000');
-  const [userId, setUserId] = useState<string>('fiscalizador-001');
+  const [serverUrl, setServerUrl] = useState<string>('https://backfiscamotov2.onrender.com');
+  const [userId, setUserId] = useState<string>('3');
   const [trackingActive, setTrackingActive] = useState<boolean>(false);
   const [currentLocation, setCurrentLocation] = useState<GeolocationPosition | null>(null);
   const [locationPermission, setLocationPermission] = useState<'prompt' | 'granted' | 'denied'>('prompt');
